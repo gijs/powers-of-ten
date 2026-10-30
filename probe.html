@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><body style="background:#000;color:#ddd;font:12px monospace"><pre id="out"></pre>
+<script type="module">
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.join(' ') + '\n'; };
+try {
+  const { AudioDirector } = await import('./src/audio.js');
+  const { ScaleDirector } = await import('./src/scale-director.js');
+  const SR = 44100, SECONDS = 3.0;
+  const BINS = []; for (let i=0;i<40;i++) BINS.push(20*(8000/20)**(i/39));
+  const spec = (d,o,n) => BINS.map(f => { let re=0,im=0; const w=2*Math.PI*f/SR;
+    for(let i=0;i<n;i++){re+=d[o+i]*Math.cos(w*i);im+=d[o+i]*Math.sin(w*i);} return Math.hypot(re,im)/n; });
+  log(' s     RMS    dB     centroid  peak@Hz');
+  const vals = [];
+  for (const s of [-14,-11,-8,-4,-1,0,2,4,9,13,17,19,21,23]) {
+    const ctx = new OfflineAudioContext(2, SR*SECONDS, SR);
+    const a = new AudioDirector({ createContext: () => ctx });
+    await a.start();
+    const d0 = new ScaleDirector(); d0.setScale(s); a.update(d0);
+    const buf = await ctx.startRendering(); const d = buf.getChannelData(0);
+    const st = Math.floor(SR*2.0);
+    let sum=0; for(let i=st;i<d.length;i++) sum+=d[i]*d[i];
+    const rms = Math.sqrt(sum/(d.length-st));
+    const m = spec(d, st, 4096);
+    let num=0,den=0,pk=0,pf=0;
+    for(let i=0;i<BINS.length;i++){num+=BINS[i]*m[i];den+=m[i]; if(m[i]>pk){pk=m[i];pf=BINS[i];}}
+    vals.push(rms);
+    log(String(s).padStart(3), rms.toFixed(4).padStart(8), (20*Math.log10(rms)).toFixed(1).padStart(7),
+        (den>0?num/den:0).toFixed(0).padStart(9), pf.toFixed(0).padStart(9));
+  }
+  const lo=Math.min(...vals), hi=Math.max(...vals);
+  log('');
+  log('loudness spread: ' + (20*Math.log10(hi/lo)).toFixed(1) + ' dB  (was 18.0 dB)');
+  globalThis.__done = true;
+} catch (e) { log('THROWN:', e && e.stack ? e.stack : e); globalThis.__done = true; }
+</script></body>

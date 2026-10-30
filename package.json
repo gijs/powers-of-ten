@@ -1,0 +1,17 @@
+{
+  "name": "powers-of-ten",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "node tools/serve.mjs",
+    "shot": "node tools/shot.mjs",
+    "build:stars": "node tools/build-star-catalog.mjs"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "Powers of Ten (1977) homage in Three.js \u2014 scale engine and HUD harness.",
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "type": "module",
+  "private": true
+}
