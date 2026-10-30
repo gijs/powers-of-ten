@@ -18,11 +18,22 @@ import { CAMERA_DISTANCE } from '../frame.js';
 
 export const PARSEC = 3.0856775814913673e16;
 
+/**
+ * Canvas height the point sizes were calibrated at.
+ *
+ * Sizes scale against this so the field is the same picture at any window
+ * size. Note that the sub-pixel flux conservation below applies at *every*
+ * size, including this one, so the size values are larger than they would be
+ * without it — they were re-measured against it rather than carried over.
+ */
+const REFERENCE_HEIGHT = 800;
+
 const vertexShader = /* glsl */ `
   attribute float aAbsMag;
   attribute float aColorIndex;
 
   uniform float uPixelRatio;
+  uniform float uSizeFactor;   // viewport height / reference height
   uniform float uSizeScale;
   uniform float uMinSize;
   uniform float uMaxSize;
@@ -64,11 +75,22 @@ const vertexShader = /* glsl */ `
     float relMag = appMag - uRefMag;
 
     // Radius goes as the square root of flux, and flux as 10^(-0.4 m).
-    float size = uSizeScale * pow(10.0, -0.2 * relMag);
-    gl_PointSize = clamp(size, uMinSize, uMaxSize) * uPixelRatio;
+    //
+    // Scaled by viewport height, so the composition is the same picture at any
+    // window size. Point size is in pixels, so without this the same stars
+    // cover a far larger fraction of a small canvas than a large one — the
+    // field measured six times brighter at 200px tall than at 800px, before
+    // any post-processing, which is a different image rather than a smaller one.
+    float natural = uSizeScale * pow(10.0, -0.2 * relMag) * uSizeFactor;
+
+    // Below a pixel nothing rasterises reliably, so grow it and take the light
+    // back out again — the same flux conservation the galaxy sprites use.
+    float sizePx = clamp(natural, 1.0, uMaxSize * uSizeFactor);
+    float dim = max(sizePx / max(natural, 1e-6), 1.0);
+    gl_PointSize = sizePx * uPixelRatio;
 
     // A floor, so the faintest stars stay as dim points rather than vanishing.
-    vAlpha = clamp(pow(10.0, -0.25 * (relMag - uFaintMag)), uMinAlpha, 1.0);
+    vAlpha = clamp(pow(10.0, -0.25 * (relMag - uFaintMag)), uMinAlpha, 1.0) / (dim * dim);
     vColor = bvToRgb(aColorIndex);
 
     gl_Position = projectionMatrix * viewPos;
@@ -103,7 +125,7 @@ const fragmentShader = /* glsl */ `
  */
 export function createStarPoints({
   pixelRatio,
-  sizeScale = 3.0,
+  sizeScale = 5.0,
   faintMag = 2.0,
   minAlpha = 0.15,
   maxSize = 34,
@@ -114,6 +136,7 @@ export function createStarPoints({
   const uniforms = {
     uWeight: { value: 0 },
     uPixelRatio: { value: pixelRatio },
+    uSizeFactor: { value: 1 },
     uSizeScale: { value: sizeScale },
     uMinSize: { value: 1.0 },
     uMaxSize: { value: maxSize },
@@ -157,6 +180,8 @@ export function createStarPoints({
 
     setWeight(w) { uniforms.uWeight.value = w; },
     setPixelRatio(r) { uniforms.uPixelRatio.value = r; },
+    /** @param {number} heightPx drawing buffer height */
+    setViewport(heightPx) { uniforms.uSizeFactor.value = heightPx / REFERENCE_HEIGHT; },
 
     update(s) {
       uniforms.uWorldToParsec.value = 10 ** s / PARSEC;

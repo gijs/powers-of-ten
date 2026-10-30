@@ -12,6 +12,11 @@ import { galacticFieldBand } from './bands/galactic-field.js';
 import { galaxyBand } from './bands/galaxy.js';
 import { localGroupBand } from './bands/local-group.js';
 import { cosmicWebBand } from './bands/cosmic-web.js';
+import { tissueBand } from './bands/tissue.js';
+import { cellBand } from './bands/cell.js';
+import { moleculeBand } from './bands/molecule.js';
+import { atomBand } from './bands/atom.js';
+import { nucleusBand } from './bands/nucleus.js';
 import { formatClock } from './format.js';
 import { AudioDirector } from './audio.js';
 
@@ -39,7 +44,9 @@ const director = new ScaleDirector();
 // content, so the harness stays usable across all 41 decades while the real
 // content is filled in band by band.
 const registry = createRegistry([
-  starsBand(), galacticFieldBand(), galaxyBand(), localGroupBand(), cosmicWebBand(),
+  nucleusBand(), atomBand(), moleculeBand(), cellBand(), tissueBand(),
+  starsBand(), galacticFieldBand(), galaxyBand(), localGroupBand(),
+  cosmicWebBand(23), cosmicWebBand(24),
 ], createDiagnosticDecade);
 
 const stage = new Stage(mount, registry);
@@ -52,7 +59,7 @@ const ui = {
   scale: el('scale-range'), scaleOut: el('scale-out'),
   decDown: el('dec-down'), decUp: el('dec-up'),
   toggleHud: el('toggle-hud'), liveOut: el('live-out'),
-  sound: el('sound'), controls: el('controls'),
+  sound: el('sound'), film: el('film'), controls: el('controls'),
 };
 
 ui.time.max = String(director.duration);
@@ -85,6 +92,11 @@ ui.sound.addEventListener('click', async () => {
 ui.reset.addEventListener('click', () => director.reset());
 ui.decDown.addEventListener('click', () => director.stepDecade(-1));
 ui.decUp.addEventListener('click', () => director.stepDecade(1));
+ui.film.addEventListener('click', () => {
+  stage.post.setEnabled(!stage.post.enabled);
+  ui.film.textContent = stage.post.enabled ? 'Film' : 'Film off';
+});
+
 ui.toggleHud.addEventListener('click', () => {
   hudVisible = !hudVisible;
   hud.setVisible(hudVisible);
@@ -107,6 +119,10 @@ window.addEventListener('keydown', (e) => {
     case ']': director.stepDecade(1); break;
     case 'r': director.reset(); break;
     case 'h': hudVisible = !hudVisible; hud.setVisible(hudVisible); break;
+    case 'f':
+      stage.post.setEnabled(!stage.post.enabled);
+      ui.film.textContent = stage.post.enabled ? 'Film' : 'Film off';
+      break;
     case 'c': ui.controls.classList.toggle('hidden'); break;
     default: return;
   }

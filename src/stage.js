@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 
 import { FOV, ASPECT, CAMERA_DISTANCE } from './frame.js';
+import { PostStack } from './post.js';
 
 export class Stage {
   /**
@@ -27,12 +28,26 @@ export class Stage {
     mount.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(FOV, ASPECT, 0.01, 200);
+    // Near and far are deliberately generous rather than tight.
+    //
+    // The usual reason to care — depth buffer precision — does not apply here:
+    // every band is transparent or additive and sets depthTest false, so they
+    // composite in band order and nothing is ever depth-sorted. That is also
+    // why this project needs no logarithmic depth buffer; the scale
+    // renormalisation removed the problem that would have called for one.
+    //
+    // What a tight far plane does do is clip content. Audited across the bands
+    // at the lowest scale each is ever drawn at, a far plane of 200 cut the
+    // star catalogue's outer shell by a factor of 43, and clipped the Local
+    // Group and both cosmic web shells outright.
+    this.camera = new THREE.PerspectiveCamera(FOV, ASPECT, 1e-4, 1e6);
     this.camera.position.set(0, 0, CAMERA_DISTANCE);
     this.camera.lookAt(0, 0, 0);
 
     this.decadeRoot = new THREE.Group();
     this.scene.add(this.decadeRoot);
+
+    this.post = new PostStack(this.renderer, this.scene, this.camera);
 
     this._ro = new ResizeObserver(() => this.resize());
     this._ro.observe(mount);
@@ -45,11 +60,17 @@ export class Stage {
     this.renderer.setSize(w, h, false);
     const pr = Math.min(devicePixelRatio, 2);
     this.renderer.setPixelRatio(pr);
-    for (const e of this.built?.values() ?? []) e.instance.setPixelRatio?.(pr);
+    const bufferHeight = this.renderer.domElement.height;
+    for (const e of this.built?.values() ?? []) {
+      e.instance.setPixelRatio?.(pr);
+      // Bands that size things in screen pixels need the buffer height too.
+      e.instance.setViewport?.(bufferHeight);
+    }
     // Aspect stays pinned to 4:3 so the HUD square maths holds; the container
     // is already letterboxed by CSS.
     this.camera.aspect = ASPECT;
     this.camera.updateProjectionMatrix();
+    this.post?.setSize(w, h);
   }
 
   _build(band) {
@@ -58,6 +79,9 @@ export class Stage {
     const entry = { band, instance, ready: !instance.ready, failed: false, disposed: false };
     this.decadeRoot.add(instance.root);
     this.built.set(band.key, entry);
+
+    instance.setPixelRatio?.(Math.min(devicePixelRatio, 2));
+    instance.setViewport?.(this.renderer.domElement.height);
 
     instance.ready?.then(() => {
       if (!entry.disposed) entry.ready = true;
@@ -117,7 +141,8 @@ export class Stage {
   }
 
   render() {
-    this.renderer.render(this.scene, this.camera);
+    if (this.post?.enabled) this.post.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   get liveCount() {

@@ -91,6 +91,7 @@ function createInstance({ url, refLevel }) {
     ready,
     setWeight: sprites.setWeight,
     setPixelRatio: sprites.setPixelRatio,
+    setViewport: sprites.setViewport,
     update(s) { sprites.updateScale(refLevel, s); },
     dispose() {
       disposed = true;
@@ -100,7 +101,7 @@ function createInstance({ url, refLevel }) {
 }
 
 /** @returns band descriptor for the registry */
-export function localGroupBand({ url = './assets/galaxies.json' } = {}) {
+export function localGroupBand({ url = new URL('../../assets/galaxies.json', import.meta.url).href } = {}) {
   const refLevel = 22;
   return {
     name: 'local-group',

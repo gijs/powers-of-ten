@@ -211,7 +211,7 @@ function createInstance({ refLevel, pixelRatio }) {
   // that are too faint to resolve, and they should read as background glow
   // rather than as a carpet of identical dots.
   const points = createStarPoints({
-    pixelRatio, minAlpha: 0.04, sizeScale: 2.8,
+    pixelRatio, minAlpha: 0.04, sizeScale: 4.7,
     maxSize: MAX_POINT_SIZE, exposureRange: [19, 19],
   });
   let disposed = false;
@@ -235,6 +235,7 @@ function createInstance({ refLevel, pixelRatio }) {
     ready,
     setWeight: points.setWeight,
     setPixelRatio: points.setPixelRatio,
+    setViewport: points.setViewport,
     update: points.update,
     dispose() {
       disposed = true;

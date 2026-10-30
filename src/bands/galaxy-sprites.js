@@ -13,6 +13,8 @@
 
 import * as THREE from 'three';
 
+import { FOV } from '../frame.js';
+
 export const TYPE_ID = { spiral: 0, irregular: 1, elliptical: 2, spheroidal: 2 };
 
 const vertexShader = /* glsl */ `
@@ -21,7 +23,10 @@ const vertexShader = /* glsl */ `
   attribute vec4 aShape;      // ellipticity, position angle, type, seed
   attribute float aBright;
 
-  uniform float uScale;       // the band root's uniform scale
+  uniform float uScale;         // the band root's uniform scale
+  uniform float uViewportHeight; // drawing buffer height, px
+  uniform float uTanHalfFov;
+  uniform float uMinPixels;      // smallest sprite that reliably rasterises
 
   varying vec2 vUv;
   varying vec4 vShape;
@@ -30,13 +35,25 @@ const vertexShader = /* glsl */ `
   void main() {
     vUv = position.xy * 2.0;  // plane spans -0.5..0.5, so this is -1..1
     vShape = aShape;
-    vBright = aBright;
 
     // Billboard: offset in view space so the quad always faces the camera.
     // aSize is in band-local units, and the offset is applied after the model
     // matrix, so it has to be scaled the same way the model matrix scales.
     vec4 mv = modelViewMatrix * vec4(aPos, 1.0);
-    mv.xy += position.xy * 2.0 * aSize * uScale;
+    float halfView = aSize * uScale;
+
+    // Minimum on-screen size. Out here galaxies really are smaller than a
+    // pixel — at 10^24 the median is about a twentieth of one — and a quad
+    // that small mostly falls between sample points and rasterises to nothing
+    // at all. Growing it to a floor and dividing the brightness by the area it
+    // gained keeps the total light the object emits unchanged, so distance
+    // still dims it; it just stops disappearing for want of a pixel to land on.
+    float depth = max(-mv.z, 1e-6);
+    float pxHalf = halfView * uViewportHeight / (2.0 * depth * uTanHalfFov);
+    float grow = max(1.0, uMinPixels / max(pxHalf, 1e-9));
+    vBright = aBright / (grow * grow);
+
+    mv.xy += position.xy * 2.0 * halfView * grow;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -133,7 +150,7 @@ const fragmentShader = /* glsl */ `
  * @param {number} [opts.exposure]
  * @param {number} [opts.gamma]
  */
-export function createGalaxySprites({ exposure = 20.0, gamma = 0.70 } = {}) {
+export function createGalaxySprites({ exposure = 20.0, gamma = 0.70, minPixels = 1.1 } = {}) {
   const root = new THREE.Group();
 
   const uniforms = {
@@ -141,6 +158,9 @@ export function createGalaxySprites({ exposure = 20.0, gamma = 0.70 } = {}) {
     uScale: { value: 1 },
     uExposure: { value: exposure },
     uGamma: { value: gamma },
+    uViewportHeight: { value: 800 },
+    uTanHalfFov: { value: Math.tan((FOV * Math.PI) / 360) },
+    uMinPixels: { value: minPixels },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -182,6 +202,8 @@ export function createGalaxySprites({ exposure = 20.0, gamma = 0.70 } = {}) {
 
     setWeight(w) { uniforms.uWeight.value = w; },
     setPixelRatio() {},
+    /** @param {number} heightPx drawing buffer height */
+    setViewport(heightPx) { uniforms.uViewportHeight.value = heightPx; },
     /** @param {number} refLevel the owning band's reference decade */
     updateScale(refLevel, s) { uniforms.uScale.value = 10 ** (refLevel - s); },
     dispose() {

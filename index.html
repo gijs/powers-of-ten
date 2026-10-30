@@ -8,7 +8,8 @@
 {
   "imports": {
     "three": "./node_modules/three/build/three.module.js",
-    "three/": "./node_modules/three/"
+    "three/": "./node_modules/three/",
+    "three/addons/": "./node_modules/three/examples/jsm/"
   }
 }
 </script>
@@ -139,9 +140,10 @@
     <div class="group">
       <button id="toggle-hud">HUD</button>
       <button id="sound">Sound</button>
+      <button id="film">Film</button>
       <span class="mono" id="live-out">0 live</span>
     </div>
-    <span class="hint">space play · ←→ scrub · [ ] decade · h hud · m mute · c controls · r reset</span>
+    <span class="hint">space play · ←→ scrub · [ ] decade · h hud · m mute · f film · c controls · r reset</span>
   </div>
 
   <script type="module" src="./src/main.js"></script>

@@ -52,13 +52,22 @@ at quarks or at superclusters.
 | `src/bands/galactic-field.js` | procedural star field, 10^19 |
 | `src/bands/galaxy.js` | raymarched Milky Way, 10^20..10^21 |
 | `src/bands/local-group.js` | galaxy billboards, 10^22 |
+| `src/bands/cosmic-web.js` | procedural large-scale structure, 10^23..10^24 |
+| `src/bands/galaxy-sprites.js` | shared galaxy billboard rendering |
+| `src/bands/raymarch.js` | shared volume-march scaffold for the inward bands |
+| `src/bands/tissue.js` | skin, 10^-3..10^-1 |
+| `src/bands/cell.js` | cells, 10^-6..10^-4 |
+| `src/bands/molecule.js` | DNA, 10^-9..10^-7 |
+| `src/bands/atom.js` | electron orbitals, 10^-11..10^-10 |
+| `src/bands/nucleus.js` | nucleus and quarks, 10^-16..10^-13 |
+| `src/audio.js` | synthesised score, mixed by scale |
+| `src/post.js` | bloom, grain, gate weave, film response |
 | `src/rng.js` | seeded PRNG and distributions |
 | `src/decades.js` | diagnostic stand-in content |
 | `src/format.js` | SI / astronomical / duration formatting |
-| `tools/serve.mjs` | static server |
-| `tools/shot.mjs` | screenshot via DevTools protocol, waits for real readiness |
 | `tools/build-star-catalog.mjs` | HYG CSV -> packed binary |
 | `tools/build-galaxy-catalog.mjs` | McConnachie FITS -> JSON |
+| `tools/serve.mjs` / `tools/shot.mjs` | static server; CDP screenshot tool |
 
 ### Two invariants
 
@@ -149,7 +158,7 @@ catalogue band has real nearby stars with enormous dynamic range, so it shows
 large bright points against black, while a field seen from hundreds of parsecs
 is finer and more even. That step is physically right.
 
-### Volume bands
+### The galaxy volume
 
 `galaxy.js` is a raymarched emission-absorption volume rather than points: past
 10^19 individual stars stop being resolvable, and dust lanes are *absorption*,
@@ -203,6 +212,69 @@ every decade sits half a cell off from the next. When the maths is right:
 
 Both are visible at a glance, at any scale.
 
+### The inward volumes, and step size
+
+`raymarch.js` carries the box-and-ray boilerplate for the inward journey; each
+band supplies only a `sampleVolume` and an exposure. Two things bite:
+
+**Step size has to be smaller than the smallest feature.** A DNA strand is
+0.034 local units thick; with the box six units deep and 72 steps, a step was
+0.17 and the ray walked straight past it. The per-pixel jitter that normally
+hides banding then turned the whole frame into colour noise. Shallow boxes,
+more steps.
+
+**Point the content across the view, not along it.** The first DNA helix ran
+along z — the view axis — so it rendered as a disc with no helix visible
+anywhere in it.
+
+Exposures are measured, not chosen: each band is rendered across its own decade
+range and the exposure picked that puts mean brightness in range without
+blowing the 95th percentile.
+
+### Audio
+
+`audio.js` is entirely synthesised — no samples, no score, zero payload, and
+nothing anyone else owns. Ten layers tile [S_MIN, S_MAX] and are mixed through
+`weightsOverRanges`, the same window function the band registry uses, so a
+sound layer fades on exactly the curve its matching visuals do.
+
+Two things run continuously rather than in layers: a drone whose fundamental
+tracks `s` directly, falling five octaves from 440 Hz at the quantum end to
+13.75 Hz at the cosmic one, and a reverb wet level that grows with scale.
+
+**Weights summing to 1 does not make the mix level.** The voice types have very
+different inherent loudness — shimmer runs about eight times quieter than
+filtered noise — and the raw mix climbed 18 dB across the journey. Each layer's
+gain is the measured value that brings it to the same RMS rendered solo, which
+holds the whole range within about 4 dB.
+
+The playhead switches from rAF time to `audioContext.currentTime` when audio
+starts, via `director.rebase`, so a seven-minute run cannot drift against the
+score.
+
+### Post
+
+Bloom, grain, gate weave, vignette and an analytic film response — all
+parametric, no LUT texture or grain plate.
+
+Bloom is calibrated against the un-posted image. A low threshold sounds right
+for a film that is mostly dark with small bright things in it, but at 0.18
+every star in a dense field qualified and the frame washed out: mean brightness
+went from 49 to 201. The shipped values lift the brightest scale slightly and
+leave the rest alone.
+
+### Depth
+
+There is no logarithmic depth buffer and there does not need to be. Every band
+is transparent or additive with `depthTest: false`, compositing in band order,
+so nothing is ever depth-sorted — the scale renormalisation removed the problem
+that would have called for one.
+
+What the audit did find was the opposite mistake: a *tight* far plane clipping
+real content. At 200 it cut the star catalogue's outer shell by a factor of 43
+and clipped the Local Group and both cosmic web shells. Near and far are now
+generous, which costs nothing when no one reads the depth buffer.
+
 ## Content plan
 
 41 decades, grouped by the technique each band wants. The bands matter more
@@ -224,19 +296,19 @@ approach has to change.
 | 10¹⁹ | outer solar neighbourhood | procedural disk model | `Points`, generated at load — **built** |
 | 10²⁰–10²¹ | Milky Way | procedural density field | raymarched volume, 3D fbm — **built** |
 | 10²² | Local Group | McConnachie catalogue | instanced galaxy billboards — **built** |
-| 10²³ | outer Local Group | needs procedural extension | see note below |
+| 10²³–10²⁴ | large-scale structure | procedural cosmic web | galaxy billboards on a density field — **built** |
 | 10²⁴ | cosmic web, CMB | procedural + Planck map | filament field, outer sphere |
 
 ### Inward
 
 | Decades | Subject | Source | Technique |
 |---|---|---|---|
-| 10⁻¹–10⁻³ | hand, skin surface | macro photography | parallax occlusion mapping |
-| 10⁻⁴–10⁻⁵ | cells, cell nucleus | hand art | SDF raymarch, translucency |
-| 10⁻⁶–10⁻⁸ | chromatin, DNA | procedural | instanced double helix |
-| 10⁻⁹–10⁻¹⁰ | atoms, electron cloud | closed form | raymarched \|ψ\|² for hydrogen-like n,l,m |
-| 10⁻¹¹–10⁻¹⁴ | nucleus, nucleons | procedural | SDF spheres, noise displacement, Fresnel rim |
-| 10⁻¹⁵–10⁻¹⁶ | protons, quarks | procedural | additive glow, no geometry |
+| 10⁻¹–10⁻³ | hand, skin surface | procedural | displaced surface march — **built** |
+| 10⁻⁴–10⁻⁶ | cells, cell nucleus | procedural | jittered lattice, membranes and nuclei — **built** |
+| 10⁻⁷–10⁻⁹ | DNA | procedural | raymarched double helix — **built** |
+| 10⁻¹⁰–10⁻¹¹ | atoms, electron cloud | closed form | raymarched \|ψ\|² — **built** |
+| 10⁻¹³–10⁻¹⁶ | nucleus, nucleons, quarks | procedural | soft emission volumes — **built** |
+
 
 **Catalogue data runs out at ~10^18.** HYG is magnitude-limited: its apparent
 stellar density falls ~26000x between the solar neighbourhood and 900 pc, while
@@ -297,16 +369,27 @@ open coverage and render ortho + DEM per level.
 
 ## Next
 
-1. Large-scale structure for 10^23–10^25: a procedurally extended field of
-   galaxies on a cosmic web, taking over where the catalogue runs out, then the
-   CMB shell at the outer edge.
-2. Replace the remaining diagnostic decades with real content, per the Content
-   plan. The art is the bulk of the work, not the code.
-3. Post stack: bloom, grain, gate weave, film LUT.
-4. Audio: layer gains driven by the same windows as the visuals. Swap
-   `clock` in `main.js` for `() => audioCtx.currentTime` so a 7-minute run
-   cannot drift — the anchor-based playhead is already built for this.
-5. Per-decade logarithmic depth or layered passes, once content has real depth.
+23 of 41 decades have real content. What is left is the outward journey from
+the ground to the stars, and it is left because it is the part that needs
+source material rather than shaders:
+
+1. **10^0–10^6 — picnic to Earth.** Photographic plates and orthoimagery. See
+   *Authoring the geo decades* above: a tile pyramid is already a scale
+   pyramid, so these can be generated from real aerial imagery and elevation
+   rather than drawn.
+2. **10^7–10^13 — Earth, Moon, solar system.** Real body textures and
+   ephemerides. Data exists; it needs fetching and a band each.
+3. **10^14–10^16 — interstellar void.** Nearly empty by nature, and the one
+   band here that could be procedural. It wants art direction more than code.
+4. **10^-12** is deliberately left diagnostic: between the electron cloud and
+   the nucleus there is genuinely nothing to see, and faking something would be
+   worse than the grid.
+
+Beyond content: the inward bands are a first pass. Each works at its own
+reference decade and thins out toward the edges of its range, because the
+shaders have features at one characteristic scale while a band spans two or
+three decades. Making detail emerge as the frame closes is the next real
+rendering problem.
 
 ## Attribution
 

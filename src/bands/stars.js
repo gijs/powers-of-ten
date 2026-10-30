@@ -73,6 +73,7 @@ function createInstance({ url, refLevel, pixelRatio, exposureRange }) {
     ready,
     setWeight: points.setWeight,
     setPixelRatio: points.setPixelRatio,
+    setViewport: points.setViewport,
     update: points.update,
     dispose() {
       disposed = true;
@@ -82,11 +83,15 @@ function createInstance({ url, refLevel, pixelRatio, exposureRange }) {
 }
 
 /**
+ * Resolved against this module's own URL rather than the page's: a bare
+ * './assets/...' in a module is relative to the *document*, so it silently
+ * depends on where index.html happens to sit.
+ *
  * @param {object} [opts]
  * @param {string} [opts.url] catalogue location
  * @returns band descriptor for the registry
  */
-export function starsBand({ url = './assets/stars.bin' } = {}) {
+export function starsBand({ url = new URL('../../assets/stars.bin', import.meta.url).href } = {}) {
   const refLevel = 17;
   return {
     name: 'stars',

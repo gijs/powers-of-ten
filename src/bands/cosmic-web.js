@@ -21,12 +21,26 @@ import { makeRng, makeNoise3 } from '../rng.js';
 
 const PARSEC = 3.0856775814913673e16;
 
-/** Sampling radius, Mpc. Must reach past the frame at the band's outer edge. */
-const RADIUS = 220;
-/** Characteristic size of superclusters and voids, Mpc. */
-const STRUCTURE_SCALE = 42;
-/** How many galaxies to draw. */
-const COUNT = 120000;
+// Sampling volume is matched to the decade, not chosen once.
+//
+// A single wide sample cannot serve both decades. At 10^24 the frame is ~70 Mpc
+// and the field has to reach a couple of hundred Mpc to fill it; spread the
+// same galaxy count over that volume and 10^23 — where the frame is only 7 Mpc
+// — contains about one galaxy. So each decade gets its own shell, sized to what
+// that frame actually shows, with the structure scale following it: groups and
+// clusters at 10^23, superclusters and voids at 10^24. It is the same lesson
+// the star bands taught, one decade up.
+//
+// `brightness` compensates for subsampling. Conserving each galaxy's own flux
+// is right for that galaxy, but every one drawn stands in for the many at the
+// same distance that are not — and the outer shell covers a thousand times the
+// volume at the same count. Without it, 10^24 comes out sixteen times darker
+// than 10^23 purely because of how thinly it was sampled. The values are
+// measured so both decades land at the same on-screen coverage.
+const SHELLS = {
+  23: { radius: 26, structureScale: 7.5, count: 110000, brightness: 1 },
+  24: { radius: 260, structureScale: 52, count: 110000, brightness: 16 },
+};
 
 /** Sprite extent as a multiple of the half-light radius. */
 const EXTENT = 3.2;
@@ -54,7 +68,7 @@ const GRID = 64;
  * does trilinear lookups. At 440 Mpc across, a cell is ~7 Mpc, which is fine
  * against a 42 Mpc structure scale.
  */
-function buildDensityGrid(seed) {
+function buildDensityGrid(seed, RADIUS, STRUCTURE_SCALE) {
   const { fbm } = makeNoise3(seed ^ 0x9e3779b9);
   const grid = new Float32Array(GRID * GRID * GRID);
   const step = (2 * RADIUS) / (GRID - 1);
@@ -77,7 +91,7 @@ function buildDensityGrid(seed) {
   return { grid, max: max || 1 };
 }
 
-function sampleGrid(grid, x, y, z) {
+function sampleGrid(grid, RADIUS, x, y, z) {
   const t = (v) => ((v + RADIUS) / (2 * RADIUS)) * (GRID - 1);
   const fx = Math.min(GRID - 1.001, Math.max(0, t(x)));
   const fy = Math.min(GRID - 1.001, Math.max(0, t(y)));
@@ -95,9 +109,17 @@ function sampleGrid(grid, x, y, z) {
  * Generate the field, yielding between chunks so the work spreads over frames
  * rather than stalling one.
  */
-export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT, chunk = 15000 } = {}) {
+export function* generateCosmicWebChunks(refLevel, {
+  seed = SEED, radius, structureScale, count, chunk = 15000,
+} = {}) {
+  const shell = SHELLS[refLevel] ?? SHELLS[23];
+  const RADIUS = radius ?? shell.radius;
+  const STRUCTURE_SCALE = structureScale ?? shell.structureScale;
+  const BRIGHTNESS = shell.brightness;
+  count = count ?? shell.count;
+
   const rng = makeRng(seed);
-  const { grid, max } = buildDensityGrid(seed);
+  const { grid, max } = buildDensityGrid(seed, RADIUS, STRUCTURE_SCALE);
 
   /** Mpc to band-local units. */
   const toLocal = (1e6 * PARSEC) / 10 ** refLevel;
@@ -122,7 +144,7 @@ export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT,
       const cy = (rng.next() * 2 - 1) * RADIUS;
       const cz = (rng.next() * 2 - 1) * RADIUS;
       if (cx * cx + cy * cy + cz * cz > r2) continue;
-      const d = sampleGrid(grid, cx, cy, cz);
+      const d = sampleGrid(grid, RADIUS, cx, cy, cz);
       x = cx; y = cy; z = cz; density = d; have = true;
       if (rng.next() * max < d) break;
     }
@@ -154,7 +176,7 @@ export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT,
 
     // Surface brightness, relative to an L* galaxy, as in the Local Group band.
     const lum = 10 ** (-0.4 * (absMag + 20.9));
-    aBright[i] = Math.min(lum / (Math.PI * (rhKpc / 5) ** 2), 2.5);
+    aBright[i] = Math.min(lum / (Math.PI * (rhKpc / 5) ** 2), 2.5) * BRIGHTNESS;
 
     if ((i + 1) % chunk === 0) yield (i + 1) / count;
   }
@@ -170,12 +192,12 @@ export function generateCosmicWeb(refLevel, opts = {}) {
   return step.value;
 }
 
-function createInstance({ refLevel }) {
-  const sprites = createGalaxySprites({ exposure: 16.0, gamma: 0.72 });
+function createInstance({ refLevel, seed }) {
+  const sprites = createGalaxySprites({ exposure: 600.0, gamma: 0.55 });
   let disposed = false;
 
   const ready = (async () => {
-    const gen = generateCosmicWebChunks(refLevel);
+    const gen = generateCosmicWebChunks(refLevel, { seed });
     let step = gen.next();
     while (!step.done) {
       await new Promise((r) => setTimeout(r, 0));
@@ -190,19 +212,25 @@ function createInstance({ refLevel }) {
     ready,
     setWeight: sprites.setWeight,
     setPixelRatio: sprites.setPixelRatio,
+    setViewport: sprites.setViewport,
     update(s) { sprites.updateScale(refLevel, s); },
     dispose() { disposed = true; sprites.dispose(); },
   };
 }
 
-/** @returns band descriptor for the registry */
-export function cosmicWebBand() {
-  const refLevel = 23;
+/**
+ * One band per decade, each sampling its own shell.
+ *
+ * @param {number} level the decade this band covers
+ * @returns band descriptor for the registry
+ */
+export function cosmicWebBand(level) {
+  if (!SHELLS[level]) throw new Error(`no cosmic web shell defined for 10^${level}`);
   return {
-    name: 'cosmic-web',
-    from: 23,
-    to: 24,
-    ref: refLevel,
-    create: () => createInstance({ refLevel }),
+    name: `cosmic-web-${level}`,
+    from: level,
+    to: level,
+    ref: level,
+    create: () => createInstance({ refLevel: level, seed: SEED + level * 7919 }),
   };
 }
