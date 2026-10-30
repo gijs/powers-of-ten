@@ -41,9 +41,63 @@ const BETA = 0.33;
  * Generate the field, yielding between chunks so the work spreads over frames
  * rather than stalling one.
  */
-export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT, chunk = 20000 } = {}) {
-  const rng = makeRng(seed);
+/** Resolution of the precomputed density grid, per axis. */
+const GRID = 64;
+
+/**
+ * Sample the structure field onto a grid once, so the rejection sampler can
+ * look density up instead of evaluating fbm per attempt.
+ *
+ * Evaluating noise inside the sampling loop costs a multiple of the accepted
+ * count — several million fbm calls for 120k galaxies, which is over a second
+ * of blocking work. The grid costs 64^3 evaluations flat and the sampler then
+ * does trilinear lookups. At 440 Mpc across, a cell is ~7 Mpc, which is fine
+ * against a 42 Mpc structure scale.
+ */
+function buildDensityGrid(seed) {
   const { fbm } = makeNoise3(seed ^ 0x9e3779b9);
+  const grid = new Float32Array(GRID * GRID * GRID);
+  const step = (2 * RADIUS) / (GRID - 1);
+  let max = 0;
+  for (let k = 0; k < GRID; k++) {
+    const z = -RADIUS + k * step;
+    for (let j = 0; j < GRID; j++) {
+      const y = -RADIUS + j * step;
+      for (let i = 0; i < GRID; i++) {
+        const x = -RADIUS + i * step;
+        const w = fbm(x / STRUCTURE_SCALE, y / STRUCTURE_SCALE, z / STRUCTURE_SCALE);
+        // Cubing sharpens the contrast between filament and void; without it
+        // the result is an even mist with no web in it at all.
+        const d = Math.max(0, (w - 0.42) / 0.38) ** 3;
+        grid[(k * GRID + j) * GRID + i] = d;
+        if (d > max) max = d;
+      }
+    }
+  }
+  return { grid, max: max || 1 };
+}
+
+function sampleGrid(grid, x, y, z) {
+  const t = (v) => ((v + RADIUS) / (2 * RADIUS)) * (GRID - 1);
+  const fx = Math.min(GRID - 1.001, Math.max(0, t(x)));
+  const fy = Math.min(GRID - 1.001, Math.max(0, t(y)));
+  const fz = Math.min(GRID - 1.001, Math.max(0, t(z)));
+  const i = fx | 0, j = fy | 0, k = fz | 0;
+  const dx = fx - i, dy = fy - j, dz = fz - k;
+  const at = (a, b, c) => grid[((c * GRID + b) * GRID + a)];
+  const lerp = (a, b, u) => a + (b - a) * u;
+  return lerp(
+    lerp(lerp(at(i,j,k), at(i+1,j,k), dx), lerp(at(i,j+1,k), at(i+1,j+1,k), dx), dy),
+    lerp(lerp(at(i,j,k+1), at(i+1,j,k+1), dx), lerp(at(i,j+1,k+1), at(i+1,j+1,k+1), dx), dy), dz);
+}
+
+/**
+ * Generate the field, yielding between chunks so the work spreads over frames
+ * rather than stalling one.
+ */
+export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT, chunk = 15000 } = {}) {
+  const rng = makeRng(seed);
+  const { grid, max } = buildDensityGrid(seed);
 
   /** Mpc to band-local units. */
   const toLocal = (1e6 * PARSEC) / 10 ** refLevel;
@@ -55,21 +109,24 @@ export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT,
 
   const magLo = 10 ** (BETA * MAG_BRIGHT);
   const magHi = 10 ** (BETA * MAG_FAINT);
+  const r2 = RADIUS * RADIUS;
 
   for (let i = 0; i < count; i++) {
-    // Rejection-sample against the structure field. Cubing sharpens the
-    // contrast between filament and void; without it the result is an even
-    // mist with no web in it at all.
+    // Only ever commit coordinates that passed the sphere test. Writing back
+    // whatever the loop happened to hold last let rejected points outside the
+    // sphere through, and the field ended up 70% wider than its own radius.
     let x = 0, y = 0, z = 0, density = 0;
-    for (let tries = 0; tries < 96; tries++) {
-      x = (rng.next() * 2 - 1) * RADIUS;
-      y = (rng.next() * 2 - 1) * RADIUS;
-      z = (rng.next() * 2 - 1) * RADIUS;
-      if (x * x + y * y + z * z > RADIUS * RADIUS) continue;
-      const w = fbm(x / STRUCTURE_SCALE, y / STRUCTURE_SCALE, z / STRUCTURE_SCALE);
-      density = Math.max(0, (w - 0.42) / 0.38) ** 3;
-      if (rng.next() < Math.min(density, 1)) break;
+    let have = false;
+    for (let tries = 0; tries < 128; tries++) {
+      const cx = (rng.next() * 2 - 1) * RADIUS;
+      const cy = (rng.next() * 2 - 1) * RADIUS;
+      const cz = (rng.next() * 2 - 1) * RADIUS;
+      if (cx * cx + cy * cy + cz * cz > r2) continue;
+      const d = sampleGrid(grid, cx, cy, cz);
+      x = cx; y = cy; z = cz; density = d; have = true;
+      if (rng.next() * max < d) break;
     }
+    if (!have) { x = y = z = 0; density = max; }
 
     aPos[i * 3 + 0] = x * toLocal;
     aPos[i * 3 + 1] = y * toLocal;
@@ -82,7 +139,7 @@ export function* generateCosmicWebChunks(refLevel, { seed = SEED, count = COUNT,
 
     // Morphology-density relation: cluster cores are red and old, the field is
     // blue and star-forming.
-    const clustered = Math.min(density, 1);
+    const clustered = Math.min(density / max, 1);
     const roll = rng.next();
     const type = roll < 0.18 + 0.62 * clustered
       ? 'elliptical'
