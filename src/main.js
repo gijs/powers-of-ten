@@ -11,6 +11,7 @@ import { starsBand } from './bands/stars.js';
 import { galacticFieldBand } from './bands/galactic-field.js';
 import { galaxyBand } from './bands/galaxy.js';
 import { localGroupBand } from './bands/local-group.js';
+import { cosmicWebBand } from './bands/cosmic-web.js';
 import { formatClock } from './format.js';
 import { AudioDirector } from './audio.js';
 
@@ -37,7 +38,9 @@ const director = new ScaleDirector();
 // Real bands go here; every level they do not claim falls back to diagnostic
 // content, so the harness stays usable across all 41 decades while the real
 // content is filled in band by band.
-const registry = createRegistry([starsBand(), galacticFieldBand(), galaxyBand(), localGroupBand()], createDiagnosticDecade);
+const registry = createRegistry([
+  starsBand(), galacticFieldBand(), galaxyBand(), localGroupBand(), cosmicWebBand(),
+], createDiagnosticDecade);
 
 const stage = new Stage(mount, registry);
 const hud = new Hud(mount);
